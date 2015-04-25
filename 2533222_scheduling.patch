@@ -1,0 +1,207 @@
+diff -Naur linux-2.6.32.60//arch/x86/include/asm/unistd_32.h orig/linux-2.6.32.60//arch/x86/include/asm/unistd_32.h
+--- linux-2.6.32.60//arch/x86/include/asm/unistd_32.h	2013-03-21 00:34:57.000000000 -0500
++++ orig/linux-2.6.32.60//arch/x86/include/asm/unistd_32.h	2015-04-25 13:33:40.000000000 -0500
+@@ -343,10 +343,11 @@
+ #define __NR_rt_tgsigqueueinfo	335
+ #define __NR_perf_event_open	336
+ #define __NR_sched_other_rr_getquantum	337
++#define __NR_sched_other_rr_setquantum 338
+ 
+ #ifdef __KERNEL__
+ 
+-#define NR_syscalls 338
++#define NR_syscalls 339
+ 
+ #define __ARCH_WANT_IPC_PARSE_VERSION
+ #define __ARCH_WANT_OLD_READDIR
+diff -Naur linux-2.6.32.60//arch/x86/kernel/syscall_table_32.S orig/linux-2.6.32.60//arch/x86/kernel/syscall_table_32.S
+--- linux-2.6.32.60//arch/x86/kernel/syscall_table_32.S	2013-03-21 00:34:57.000000000 -0500
++++ orig/linux-2.6.32.60//arch/x86/kernel/syscall_table_32.S	2015-04-25 13:34:21.000000000 -0500
+@@ -337,3 +337,4 @@
+ 	.long sys_rt_tgsigqueueinfo	/* 335 */
+ 	.long sys_perf_event_open
+ 	.long sys_sched_other_rr_getquantum
++  .long sys_sched_other_rr_setquantum
+diff -Naur linux-2.6.32.60//include/linux/syscalls.h orig/linux-2.6.32.60//include/linux/syscalls.h
+--- linux-2.6.32.60//include/linux/syscalls.h	2013-03-21 16:29:12.000000000 -0500
++++ orig/linux-2.6.32.60//include/linux/syscalls.h	2015-04-25 13:35:21.000000000 -0500
+@@ -887,4 +887,5 @@
+ 			unsigned long fd, unsigned long pgoff);
+ 
+ asmlinkage long sys_sched_other_rr_getquantum(void);
++asmlinkage long sys_sched_other_rr_setquantum(unsigned int quantum);
+ #endif
+diff -Naur linux-2.6.32.60//kernel/sched.c orig/linux-2.6.32.60//kernel/sched.c
+--- linux-2.6.32.60//kernel/sched.c	2013-03-21 17:33:12.000000000 -0500
++++ orig/linux-2.6.32.60//kernel/sched.c	2015-04-25 16:10:00.000000000 -0500
+@@ -6397,6 +6397,12 @@
+ 
+ #ifdef __ARCH_WANT_SYS_NICE
+ 
++SYSCALL_DEFINE1( sched_other_rr_setquantum, unsigned int, quantum)
++{
++  printk("Quantum changed from %d to %d\n", other_rr_time_slice, quantum);
++  other_rr_time_slice = quantum;
++}
++
+ /*
+  * sys_nice - change the priority of the current process.
+  * @increment: priority increment
+@@ -6504,6 +6510,10 @@
+ 	case SCHED_RR:
+ 		p->sched_class = &rt_sched_class;
+ 		break;
++  case SCHED_OTHER_RR:
++    printk("Other RR Scheduler set.");
++    p->sched_class = &other_rr_sched_class;
++    break;
+ 	}
+ 
+ 	p->rt_priority = prio;
+@@ -6550,10 +6560,13 @@
+ 		reset_on_fork = !!(policy & SCHED_RESET_ON_FORK);
+ 		policy &= ~SCHED_RESET_ON_FORK;
+ 
+-		if (policy != SCHED_FIFO && policy != SCHED_RR &&
+-		policy != SCHED_NORMAL && policy != SCHED_BATCH &&
+-		policy != SCHED_IDLE)
+-			return -EINVAL;
++		if (policy != SCHED_OTHER_RR && 
++      policy != SCHED_FIFO && policy != SCHED_RR &&
++		  policy != SCHED_NORMAL && policy != SCHED_BATCH &&
++		  policy != SCHED_IDLE)
++    {
++       return -EINVAL;
++    }
+ 	}
+ 
+ 	/*
+@@ -6564,9 +6577,13 @@
+ 	if (param->sched_priority < 0 ||
+ 	    (p->mm && param->sched_priority > MAX_USER_RT_PRIO-1) ||
+ 	    (!p->mm && param->sched_priority > MAX_RT_PRIO-1))
+-		return -EINVAL;
++  {
++    return -EINVAL;
++  }
+ 	if (rt_policy(policy) != (param->sched_priority != 0))
+-		return -EINVAL;
++  {
++    return -EINVAL;
++  }
+ 
+ 	/*
+ 	 * Allow unprivileged RT tasks to decrease priority:
+@@ -6576,8 +6593,10 @@
+ 			unsigned long rlim_rtprio;
+ 
+ 			if (!lock_task_sighand(p, &flags))
++      {
+ 				return -ESRCH;
+-			rlim_rtprio = p->signal->rlim[RLIMIT_RTPRIO].rlim_cur;
++			}
++      rlim_rtprio = p->signal->rlim[RLIMIT_RTPRIO].rlim_cur;
+ 			unlock_task_sighand(p, &flags);
+ 
+ 			/* can't set/change the rt policy */
+@@ -6707,7 +6726,10 @@
+ 	int retval;
+ 
+ 	if (!param || pid < 0)
++  {
+ 		return -EINVAL;
++  }
++  
+ 	if (copy_from_user(&lparam, param, sizeof(struct sched_param)))
+ 		return -EFAULT;
+ 
+diff -Naur linux-2.6.32.60//kernel/sched_other_rr.c orig/linux-2.6.32.60//kernel/sched_other_rr.c
+--- linux-2.6.32.60//kernel/sched_other_rr.c	2013-03-21 16:29:12.000000000 -0500
++++ orig/linux-2.6.32.60//kernel/sched_other_rr.c	2015-04-25 15:26:30.000000000 -0500
+@@ -31,7 +31,10 @@
+  */
+ static void enqueue_task_other_rr(struct rq *rq, struct task_struct *p, int wakeup, bool b)
+ {
+-	// not yet implemented
++	update_curr_other_rr(rq);
++  list_add_tail(&p->other_rr_run_list, &rq->other_rr.queue);
++  rq->other_rr.nr_running = rq->other_rr.nr_running + 1;
++  printk("Enqueue: %ld, n = %ld\n", (unsigned long int)p, rq->other_rr.nr_running);
+ }
+ 
+ static void dequeue_task_other_rr(struct rq *rq, struct task_struct *p, int sleep)
+@@ -39,7 +42,9 @@
+ 	// first update the task's runtime statistics
+ 	update_curr_other_rr(rq);
+ 
+-	// not yet implemented
++	list_del(&p->other_rr_run_list);
++  rq->other_rr.nr_running--;
++  printk("Dequeue: %ld, n = %ld\n", (unsigned long int)p, rq->other_rr.nr_running);
+ }
+ 
+ /*
+@@ -57,7 +62,7 @@
+ static void
+ yield_task_other_rr(struct rq *rq)
+ {
+-	// not yet implemented
++	requeue_task_other_rr(rq, rq->curr);
+ }
+ 
+ /*
+@@ -73,11 +78,15 @@
+  */
+ static struct task_struct *pick_next_task_other_rr(struct rq *rq)
+ {
+-	struct task_struct *next;
+-	struct list_head *queue;
+-	struct other_rr_rq *other_rr_rq;
+-
+-	// not yet implemented
++	struct task_struct *next = NULL;
++	//struct list_head *queue;
++	//struct other_rr_rq *other_rr_rq;
++
++	if (!list_empty(&rq->other_rr.queue))
++  {
++    next = list_entry(rq->other_rr.queue.next, struct task_struct, other_rr_run_list);
++    next->se.exec_start = rq->clock;
++  }
+ 
+ 	/* after selecting a task, we need to set a timer to maintain correct
+ 	 * runtime statistics. You can uncomment this line after you have
+@@ -86,7 +95,7 @@
+ 	//next->se.exec_start = rq->clock;
+ 	
+ 	/* you need to return the selected task here */
+-	return NULL;
++	return next;
+ }
+ 
+ static void put_prev_task_other_rr(struct rq *rq, struct task_struct *p)
+@@ -179,7 +188,23 @@
+ 	// first update the task's runtime statistics
+ 	update_curr_other_rr(rq);
+ 
+-	// not yet implemented
++  //Need to do FCFS if quantum = 0.
++	if (other_rr_time_slice == 0)
++  {
++    printk("Task %ld is FCFS", (unsigned long int)p);
++    return;
++  }
++  else
++  {
++    printk("Task %ld is RR with quantum = %d\n", (unsigned long int)p, p->task_time_slice);
++
++    if (p->task_time_slice-- == 0)
++    {
++      p->task_time_slice = other_rr_time_slice;
++      set_tsk_need_resched(p);
++      yield_task_other_rr(rq);
++    }
++  }
+ }
+ 
+ /*
